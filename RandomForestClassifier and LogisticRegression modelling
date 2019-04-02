@@ -1,0 +1,294 @@
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import random
+from sklearn.preprocessing import StandardScaler
+import seaborn as sns
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import f1_score,confusion_matrix
+from sklearn.metrics import accuracy_score
+from sklearn.linear_model import LogisticRegression
+
+#read raw data from csv
+df_atp = pd.read_csv('insert file location')
+df_wta = pd.read_csv('insert file location')
+
+numeric_columns = ['Winner_Rank', 'Loser_Rank', 'Retirement_Ind',
+                   'Winner_Sets_Won', 'Winner_Games_Won', 'Winner_Aces',
+                   'Winner_DoubleFaults', 'Winner_FirstServes_Won',
+                   'Winner_FirstServes_In', 'Winner_SecondServes_Won',
+                   'Winner_SecondServes_In', 'Winner_BreakPoints_Won',
+                   'Winner_BreakPoints', 'Winner_ReturnPoints_Won',
+                   'Winner_ReturnPoints_Faced', 'Winner_TotalPoints_Won', 'Loser_Sets_Won',
+                   'Loser_Games_Won', 'Loser_Aces', 'Loser_DoubleFaults',
+                   'Loser_FirstServes_Won', 'Loser_FirstServes_In',
+                   'Loser_SecondServes_Won', 'Loser_SecondServes_In',
+                   'Loser_BreakPoints_Won', 'Loser_BreakPoints', 'Loser_ReturnPoints_Won',
+                   'Loser_ReturnPoints_Faced', 'Loser_TotalPoints_Won']
+
+text_columns = ['Winner', 'Loser',  'Tournament', 'Court_Surface','Round_Description'] 
+
+date_columns = ['Tournament_Date']
+
+# we set the **erros** to coerce so any non-numerical values (text,special characters) will return an NA
+df_atp[numeric_columns] = df_atp[numeric_columns].apply(pd.to_numeric,errors = 'coerce')
+df_wta[numeric_columns] = df_wta[numeric_columns].apply(pd.to_numeric,errors = 'coerce')
+
+df_atp.Tournament_Date = pd.to_datetime(df_atp.Tournament_Date)
+df_wta.Tournament_Date = pd.to_datetime(df_wta.Tournament_Date)
+
+#we will discard any rows which contain NaN entries; alternatively, can impute such values. For now do simple method
+df_atp_relevant = df_atp[df_atp.isnull().any(axis=1) == False].reset_index(drop=True)
+df_wta_relevant = df_wta[df_wta.isnull().any(axis=1) == False].reset_index(drop=True)
+
+df_atp_relevant['Total_Points'] = df_atp_relevant.Winner_TotalPoints_Won + df_atp_relevant.Loser_TotalPoints_Won
+df_wta_relevant['Total_Points'] = df_wta_relevant.Winner_TotalPoints_Won + df_wta_relevant.Loser_TotalPoints_Won
+
+#Get the column names for the winner and loser stats
+winner_cols = [col for col in df_atp_relevant.columns if col.startswith('Winner')]
+loser_cols = [col for col in df_atp_relevant.columns if col.startswith('Loser')]
+
+#create new dataframes to store the winner/loser stats
+#In addition to the winner and loser columns, we are adding common columns as well (e.g. tournament dates, etc)
+common_cols = ['Retirement_Ind','Total_Points','Tournament','Tournament_Date', 'Court_Surface','Round_Description']
+df_winner_atp = df_atp_relevant[winner_cols + common_cols]
+df_loser_atp = df_atp_relevant[loser_cols + common_cols]
+df_winner_wta = df_wta_relevant[winner_cols + common_cols]
+df_loser_wta = df_wta_relevant[loser_cols + common_cols]
+
+#Create a new column to show whether the player has won or not. 
+df_winner_atp['won'] = 1
+df_loser_atp['won'] = 0
+df_winner_wta['won'] = 1
+df_loser_wta['won'] = 0
+
+#Rename the columns for the winner/loser dataframes so they are identical; we will append them later on.
+#We will rename the Winner_ / Loser_ columns to Player_
+
+new_column_names = [col.replace('Winner','Player') for col in winner_cols]
+
+df_winner_atp.columns = new_column_names + common_cols + ['won']
+df_loser_atp.columns  = df_winner_atp.columns
+df_winner_wta.columns  = df_winner_atp.columns
+df_loser_wta.columns  = df_winner_atp.columns
+
+#append the winner and loser dataframes; this also has benefit of randomizing the 'won' column, which will be beneficial when making training/test sets
+df_long_atp= df_winner_atp.append(df_loser_atp).sort_index()
+df_long_wta= df_winner_wta.append(df_loser_wta).sort_index()
+
+#df_long_atp/wta are the dataframes that contains all the player histories which do not contain NaN entries
+
+#get features in percentages; NB: we add 0.0001 on denominators to avoid division by zero
+atp_stats = df_long_atp.iloc[:,0:2].copy()
+atp_stats['Player_Aces'] = df_long_atp.Player_Aces
+atp_stats['Player_DoubleFaults'] = df_long_atp.Player_DoubleFaults
+atp_stats['Player_FirstServes_In'] = df_long_atp.Player_FirstServes_In / (df_long_atp.Player_FirstServes_In + df_long_atp.Player_SecondServes_In + 0.0001)
+atp_stats['Player_FirstServes_Won'] = df_long_atp.Player_FirstServes_Won / (df_long_atp.Player_FirstServes_In + 0.0001)
+atp_stats['Player_SecondServes_In'] = df_long_atp.Player_SecondServes_In / (df_long_atp.Player_FirstServes_In + df_long_atp.Player_SecondServes_In + 0.0001)
+atp_stats['Player_SecondServes_Won'] = df_long_atp.Player_SecondServes_Won / (df_long_atp.Player_SecondServes_In + 0.0001)
+atp_stats['Player_ServicePoints'] = (df_long_atp.Player_FirstServes_Won + df_long_atp.Player_SecondServes_Won) / (df_long_atp.Player_FirstServes_In + df_long_atp.Player_SecondServes_In + 0.0001)
+atp_stats['Player_BreakPoints'] = df_long_atp.Player_BreakPoints_Won / (df_long_atp.Player_BreakPoints + 0.0001)
+atp_stats['Player_ReturnPoints'] = df_long_atp.Player_ReturnPoints_Won / (df_long_atp.Player_ReturnPoints_Faced + 0.0001)
+atp_stats['Player_TotalPoints'] = df_long_atp.Player_TotalPoints_Won / (df_long_atp.Total_Points + 0.0001)
+atp_stats['Player_Retire'] = df_long_atp.Retirement_Ind
+atp_stats['won'] = df_long_atp.won
+atp_stats[['Tournament','Tournament_Date','Court_Surface','Round_Description']] = df_long_atp.iloc[:,-5:-1]
+
+wta_stats = df_long_wta.iloc[:,0:2].copy()
+wta_stats['Player_Aces'] = df_long_wta.Player_Aces
+wta_stats['Player_DoubleFaults'] = df_long_wta.Player_DoubleFaults
+wta_stats['Player_FirstServes_In'] = df_long_wta.Player_FirstServes_In / (df_long_wta.Player_FirstServes_In + df_long_wta.Player_SecondServes_In + 0.0001)
+wta_stats['Player_FirstServes_Won'] = df_long_wta.Player_FirstServes_Won / (df_long_wta.Player_FirstServes_In + 0.0001)
+wta_stats['Player_SecondServes_In'] = df_long_wta.Player_SecondServes_In / (df_long_wta.Player_FirstServes_In + df_long_wta.Player_SecondServes_In + 0.0001)
+wta_stats['Player_SecondServes_Won'] = df_long_wta.Player_SecondServes_Won / (df_long_wta.Player_SecondServes_In + 0.0001)
+wta_stats['Player_ServicePoints'] = (df_long_wta.Player_FirstServes_Won + df_long_wta.Player_SecondServes_Won) / (df_long_wta.Player_FirstServes_In + df_long_wta.Player_SecondServes_In + 0.0001)
+wta_stats['Player_BreakPoints'] = df_long_wta.Player_BreakPoints_Won / (df_long_wta.Player_BreakPoints + 0.0001)
+wta_stats['Player_ReturnPoints'] = df_long_wta.Player_ReturnPoints_Won / (df_long_wta.Player_ReturnPoints_Faced + 0.0001)
+wta_stats['Player_TotalPoints'] = df_long_wta.Player_TotalPoints_Won / (df_long_wta.Total_Points + 0.0001)
+wta_stats['Player_Retire'] = df_long_wta.Retirement_Ind
+wta_stats['won'] = df_long_wta.won
+wta_stats[['Tournament','Tournament_Date','Court_Surface','Round_Description']] = df_long_wta.iloc[:,-5:-1]
+
+#atp/wta_stats contains player statistics in % (not all stats though) 
+
+#since the 'won' column is now randomized, we will label every even-indexed player as p1 and every odd-indexed player as p2
+#we will create new features from existing ones; feature engineering
+#and then create a dataframe that contains stat difference between p1 and p2 for each match
+
+#######################################
+#for ATP
+p1_atp_stats = atp_stats.iloc[0::2,:].drop(columns=['won'])
+p2_atp_stats = atp_stats.iloc[1::2,:].drop(columns=['won'])
+
+#renaming "player" columns to p1/p2 cols
+player_cols = [col for col in p1_atp_stats.columns if col.startswith('Player')]
+p1_cols = [col.replace('Player','p1') for col in player_cols]
+p2_cols = [col.replace('Player','p2') for col in player_cols]
+
+p1_atp_stats.columns = p1_cols + ['Tournament','Tournament_Date','Court_Surface','Round_Description']
+p2_atp_stats.columns = p2_cols + ['Tournament','Tournament_Date','Court_Surface','Round_Description']
+
+#create new dataset
+new_atp = pd.concat([p1_atp_stats.iloc[:,0:-4], p2_atp_stats.iloc[:,:]], axis=1)
+#creating new features from existing ones; feature engineering
+new_atp['p1_ServeAdv'] = new_atp.p1_ServicePoints - new_atp.p2_ReturnPoints
+new_atp['p2_ServeAdv'] = new_atp.p2_ServicePoints - new_atp.p1_ReturnPoints
+new_atp['p1_completeness'] = new_atp.p1_ServicePoints * new_atp.p1_ReturnPoints
+new_atp['p2_completeness'] = new_atp.p2_ServicePoints * new_atp.p2_ReturnPoints
+new_atp['p1_holdcomposure'] = new_atp.p1_ServicePoints * (1 - new_atp.p2_BreakPoints)
+new_atp['p2_holdcomposure'] = new_atp.p2_ServicePoints * (1 - new_atp.p1_BreakPoints)
+new_atp['p1_win'] = atp_stats.iloc[0::2,:].won
+
+#for WTA
+p1_wta_stats = wta_stats.iloc[0::2,:].drop(columns=['won'])
+p2_wta_stats = wta_stats.iloc[1::2,:].drop(columns=['won'])
+
+player_cols = [col for col in p1_wta_stats.columns if col.startswith('Player')]
+
+p1_cols = [col.replace('Player','p1') for col in player_cols]
+p2_cols = [col.replace('Player','p2') for col in player_cols]
+
+p1_wta_stats.columns = p1_cols + ['Tournament','Tournament_Date','Court_Surface','Round_Description']
+p2_wta_stats.columns = p2_cols + ['Tournament','Tournament_Date','Court_Surface','Round_Description']
+
+#create new dataset
+new_wta = pd.concat([p1_wta_stats.iloc[:,0:-4], p2_wta_stats.iloc[:,:]], axis=1)
+#creating new features from existing ones; feature engineering
+new_wta['p1_ServeAdv'] = new_wta.p1_ServicePoints - new_wta.p2_ReturnPoints
+new_wta['p2_ServeAdv'] = new_wta.p2_ServicePoints - new_wta.p1_ReturnPoints
+new_wta['p1_completeness'] = new_wta.p1_ServicePoints * new_wta.p1_ReturnPoints
+new_wta['p2_completeness'] = new_wta.p2_ServicePoints * new_wta.p2_ReturnPoints
+new_wta['p1_holdcomposure'] = new_wta.p1_ServicePoints * (1 - new_wta.p2_BreakPoints)
+new_wta['p2_holdcomposure'] = new_wta.p2_ServicePoints * (1 - new_wta.p1_BreakPoints)
+new_wta['p1_win'] = wta_stats.iloc[0::2,:].won
+
+#new_atp and new_wta are what we will work with now, preprocessed the dataset to get these two datasets
+#they are basically the post-wrangled data, with new features that we will be using for model training and feature estimation
+new_atp = new_atp.reset_index(drop=True)
+new_wta = new_wta.reset_index(drop=True)
+
+#get dataset that contains player stat differences for each match
+#since we are modelling AusOpen, we will only consider entries for hard court surfaces
+new_atp_hard = new_atp.loc[new_atp.Court_Surface.isin(['Hard','Indoor Hard'])].reset_index(drop=True)
+new_wta_hard = new_wta.loc[new_wta.Court_Surface.isin(['Hard','Indoor Hard'])].reset_index(drop=True)
+
+#for ATP
+atp_diff_hard = pd.DataFrame()
+atp_diff_hard['rank_diff'] = new_atp_hard.p1_Rank - new_atp_hard.p2_Rank
+atp_diff_hard['aces_diff'] = new_atp_hard.p1_Aces - new_atp_hard.p2_Aces
+atp_diff_hard['doublefaults_diff'] = new_atp_hard.p1_DoubleFaults - new_atp_hard.p2_DoubleFaults
+atp_diff_hard['firstserves_in_diff'] = new_atp_hard.p1_FirstServes_In - new_atp_hard.p2_FirstServes_In
+atp_diff_hard['firstserves_won_diff'] = new_atp_hard.p1_FirstServes_Won - new_atp_hard.p2_FirstServes_Won
+atp_diff_hard['secondserves_in_diff'] = new_atp_hard.p1_SecondServes_In - new_atp_hard.p2_SecondServes_In
+atp_diff_hard['secondserves_won_diff'] = new_atp_hard.p1_SecondServes_Won - new_atp_hard.p2_SecondServes_Won
+atp_diff_hard['servicepoints_diff'] = new_atp_hard.p1_ServicePoints - new_atp_hard.p2_ServicePoints
+atp_diff_hard['breakpoints_diff'] = new_atp_hard.p1_BreakPoints - new_atp_hard.p2_BreakPoints
+atp_diff_hard['returnpoints_diff'] = new_atp_hard.p1_ReturnPoints - new_atp_hard.p2_ReturnPoints
+atp_diff_hard['totalpoints_diff'] = new_atp_hard.p1_TotalPoints - new_atp_hard.p2_TotalPoints
+atp_diff_hard['retire_chance_diff'] = new_atp_hard.p1_Retire - new_atp_hard.p2_Retire
+atp_diff_hard['serveadv_diff'] = new_atp_hard.p1_ServeAdv - new_atp_hard.p2_ServeAdv
+atp_diff_hard['completeness_diff'] = new_atp_hard.p1_completeness - new_atp_hard.p2_completeness
+atp_diff_hard['holdcomposure_diff'] = new_atp_hard.p1_holdcomposure - new_atp_hard.p2_holdcomposure
+atp_diff_hard['p1_win'] = new_atp_hard.p1_win
+
+#for WTA
+wta_diff_hard = pd.DataFrame()
+wta_diff_hard['rank_diff'] = new_wta_hard.p1_Rank - new_wta_hard.p2_Rank
+wta_diff_hard['aces_diff'] = new_wta_hard.p1_Aces - new_wta_hard.p2_Aces
+wta_diff_hard['doublefaults_diff'] = new_wta_hard.p1_DoubleFaults - new_wta_hard.p2_DoubleFaults
+wta_diff_hard['firstserves_in_diff'] = new_wta_hard.p1_FirstServes_In - new_wta_hard.p2_FirstServes_In
+wta_diff_hard['firstserves_won_diff'] = new_wta_hard.p1_FirstServes_Won - new_wta_hard.p2_FirstServes_Won
+wta_diff_hard['secondserves_in_diff'] = new_wta_hard.p1_SecondServes_In - new_wta_hard.p2_SecondServes_In
+wta_diff_hard['secondserves_won_diff'] = new_wta_hard.p1_SecondServes_Won - new_wta_hard.p2_SecondServes_Won
+wta_diff_hard['servicepoints_diff'] = new_wta_hard.p1_ServicePoints - new_wta_hard.p2_ServicePoints
+wta_diff_hard['breakpoints_diff'] = new_wta_hard.p1_BreakPoints - new_wta_hard.p2_BreakPoints
+wta_diff_hard['returnpoints_diff'] = new_wta_hard.p1_ReturnPoints - new_wta_hard.p2_ReturnPoints
+wta_diff_hard['totalpoints_diff'] = new_wta_hard.p1_TotalPoints - new_wta_hard.p2_TotalPoints
+wta_diff_hard['retire_chance_diff'] = new_wta_hard.p1_Retire - new_wta_hard.p2_Retire
+wta_diff_hard['serveadv_diff'] = new_wta_hard.p1_ServeAdv - new_wta_hard.p2_ServeAdv
+wta_diff_hard['completeness_diff'] = new_wta_hard.p1_completeness - new_wta_hard.p2_completeness
+wta_diff_hard['holdcomposure_diff'] = new_wta_hard.p1_holdcomposure - new_wta_hard.p2_holdcomposure
+wta_diff_hard['p1_win'] = new_wta_hard.p1_win
+
+#NB: these statistics are the post-game stats; we can consider these as being the "truth" performance of each player
+#we will train the model on the actual performance outcomes
+#the main problem lies in estimating the expected performance for each player based on their past performance
+#that is, we wish to make a model which aims to estimate E[current performance|past performance]
+#if we can estimate this to a high degree of accuracy, then we should be able to get an accurate model for predicting the winner between p1 and p2.
+
+###### creating model to predict winner between p1 and p2 based on the difference between their post-match stats
+
+#train models on atp_diff_hard and wta_diff_hard
+
+"""for ATP: 2012 : rows 0:1645
+            2013 : rows 1645:3302
+            2014 : rows 3302:4840
+            2015 : rows 4840:6289
+            2016 : rows 6289:7960
+            2017 : rows 7960:9631
+            2018 : rows 9631:11297
+            2019 : rows 11297:  
+
+for WTA:    2014 : rows 0:1501
+            2015 : rows 1501:2949
+            2016 : rows 2949:4488
+            2017 : rows 4488:6027
+            2018 : rows 6027:7508
+            2019 : rows 7508:  
+"""
+#for ATP training dataset will span from 2012-2016; validation from 2017-2018, testing on 2019
+X_train_atp = atp_diff_hard.iloc[0:7960,:-1]
+X_val_atp = atp_diff_hard.iloc[7960:11297,:-1]
+X_test_atp = atp_diff_hard.iloc[11297:,:-1]
+y_train_atp = atp_diff_hard.iloc[0:7960,-1]
+y_val_atp = atp_diff_hard.iloc[7960:11297,-1]
+y_test_atp = atp_diff_hard.iloc[11297:,-1]
+
+#for WTA training dataset will span from 2014-2016; validation from 2017-2018, testing on 2019
+X_train_wta = wta_diff_hard.iloc[0:4488,:-1]
+X_val_wta = wta_diff_hard.iloc[4488:7508,:-1]
+X_test_wta = wta_diff_hard.iloc[7508:,:-1]
+y_train_wta = wta_diff_hard.iloc[0:4488,-1]
+y_val_wta = wta_diff_hard.iloc[4488:7508,-1]
+y_test_wta = wta_diff_hard.iloc[7508:,-1]
+
+#RandomForestClassifier for ATP
+RFC_model_atp = RandomForestClassifier(random_state=43)      
+RFC_model_atp = RFC_model_atp.fit(X_train_atp,y_train_atp)
+
+print('ATP RFC: Accuracy on validation set is: ',accuracy_score(y_val_atp,RFC_model_atp.predict(X_val_atp)))
+print('ATP RFC: Accuracy on test set is: ',accuracy_score(y_test_atp,RFC_model_atp.predict(X_test_atp)))
+#validation and testing accuracies are 93.287% and 92.777%, respectively  
+
+cm = confusion_matrix(y_test_atp,RFC_model_atp.predict(X_test_atp))
+sns.heatmap(cm,annot=True,fmt="d")
+plt.show()
+
+#LogisticRegression for ATP
+LR_model_atp = LogisticRegression(random_state=0, fit_intercept=False, solver='liblinear')      
+LR_model_atp = LR_model_atp.fit(X_train_atp,y_train_atp)
+
+print('ATP LR: Accuracy on validation set is: ',accuracy_score(y_val_atp,LR_model_atp.predict(X_val_atp)))
+print('ATP LR: Accuracy on test set is: ',accuracy_score(y_test_atp,LR_model_atp.predict(X_test_atp)))
+#validation and testing accuracies are 92.927% and 89.444%, respectively
+
+#RFC_accuracy > LR_accuracy on both validation and testing sets; we will go with RFC_model_atp
+
+#RandomForestClassifier for WTA
+RFC_model_wta = RandomForestClassifier(random_state=43)      
+RFC_model_wta = RFC_model_wta.fit(X_train_wta,y_train_wta)
+
+print('WTA RFC: Accuracy on validation set is: ',accuracy_score(y_val_wta,RFC_model_wta.predict(X_val_wta)))
+print('WTA RFC: Accuracy on test set is: ',accuracy_score(y_test_wta,RFC_model_wta.predict(X_test_wta)))
+#validation and testing accuracies are 95.794% and 94.074%, respectively
+
+#LogisticRegression for WTA
+LR_model_wta = LogisticRegression(random_state=0, fit_intercept=False, solver='liblinear')      
+LR_model_wta = LR_model_wta.fit(X_train_wta,y_train_wta)
+
+print('WTA LR: Accuracy on validation set is: ',accuracy_score(y_val_wta,LR_model_wta.predict(X_val_wta)))
+print('WTA LR: Accuracy on test set is: ',accuracy_score(y_test_wta,LR_model_wta.predict(X_test_wta)))
+#validation and testing accuracies are 95.927% and 92.592%, respectively
+
+#RFC_accuracy > LR_accuracy on both validation and testing sets; we will go with RFC_model_atp
+#we note that for both ATP and WTA, the RFC ranks features in very similarly, this can be inferred from .feature_importances_
