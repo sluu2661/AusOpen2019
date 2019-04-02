@@ -1,0 +1,43 @@
+#we wish to make a model for FEATURE ESTIMATION, we can look towards various time series methods
+#we do feature estimation using atp/wta_stats dataframe
+#one of main issues with this dataframe is that the Tournament_Date is only given by a tournaments start date, it does not follow by day.
+#to handle this, we aim to do some sort of estimation based on a players past X matches, where X is a specified window.
+#for ATP tournaments, there is at between 3-7 rounds, depending on tournament, as such, we will take X=5 as our window
+
+#this is the most challenging part of the modelling; training an accurate model on post-game match statistics is easy
+#estimating a players expected performance based on their past games is very difficult
+
+#we will first use simplest estimation, exponentially weighted moving average of the past 5 matches
+#from these estimates, we will assign the latest estimate as the expected performance for the tournament
+
+Federer_history = atp_stats[atp_stats.Player == 'Roger Federer']
+Federer_est = Federer_history.iloc[:,2:-4].ewm(span=5, min_periods=1).mean()
+
+atp_players = atp_stats.Player.unique()
+wta_players = wta_stats.Player.unique()
+
+atp_players_est = pd.DataFrame(columns=atp_stats.columns[0:-5])
+count = 0
+for player in atp_players:
+	player_history = atp_stats[atp_stats.Player == player]
+	player_rank = player_history.iloc[-1,:].Player_Rank
+	player_est = player_history.iloc[:,2:-5].ewm(span=5, min_periods=1).mean()
+	latest_est = player_est.iloc[-1,:]
+	latest_est['Player_Rank'] = player_rank
+	latest_est['Player'] = player
+	atp_players_est.loc[count] = latest_est[atp_players_est.columns]
+	count += 1
+	print('Player {0} of {1} done'.format(count+1, len(atp_players)+1))
+
+wta_players_est = pd.DataFrame(columns=wta_stats.columns[0:-5])
+count = 0
+for player in wta_players:
+	player_history = wta_stats[wta_stats.Player == player]
+	player_rank = player_history.iloc[-1,:].Player_Rank
+	player_est = player_history.iloc[:,2:-5].ewm(span=5, min_periods=1).mean()
+	latest_est = player_est.iloc[-1,:]
+	latest_est['Player_Rank'] = player_rank
+	latest_est['Player'] = player
+	wta_players_est.loc[count] = latest_est[wta_players_est.columns]
+	count += 1
+	print('Player {0} of {1} done'.format(count+1, len(wta_players)+1))
